@@ -14,7 +14,9 @@ from typing import Dict, Callable, Any
 import pyupbit
 
 from utils import load_filter_settings, load_market_signals, load_secrets, send_telegram
-from helpers.strategies import check_buy_signal, check_sell_signal
+from helpers.strategies import check_buy_signal, check_sell_signal, df_to_market
+from helpers.priorities import select_buy_strategy
+from helpers.utils.strategy_cfg import load_strategy_list
 from helpers.execution import smart_buy, smart_sell
 from helpers.logger import log_trade
 from helpers.utils.funds import load_fund_settings
@@ -132,6 +134,7 @@ def run_trading_bot(upbit: pyupbit.Upbit, interval: float = 3.0) -> None:
     """Main trading loop integrating strategy checks and execution."""
     filter_conf = load_filter_settings()
     strategy_conf = load_strategy_settings()
+    strategy_table = load_strategy_list()
     fund_conf = load_fund_settings()
     risk_conf = load_risk_settings()
     active_trades: Dict[str, Dict[str, float]] = {}
@@ -191,6 +194,7 @@ def run_trading_bot(upbit: pyupbit.Upbit, interval: float = 3.0) -> None:
             if now - last_reload > 300:
                 filter_conf = load_filter_settings()
                 strategy_conf = load_strategy_settings()
+                strategy_table = load_strategy_list()
                 fund_conf = load_fund_settings()
                 risk_conf = load_risk_settings()
                 last_reload = now
@@ -208,9 +212,13 @@ def run_trading_bot(upbit: pyupbit.Upbit, interval: float = 3.0) -> None:
                 ):
                     logger.debug("[BOT] max concurrent trades reached")
                     break
-                strat = strategy_conf.get("strategy", "M-BREAK")
-                level = strategy_conf.get("level", "중도적")
-                if check_buy_signal(strat, ticker, level):
+                market = {}
+                strat = select_buy_strategy(market, strategy_table)
+                if strat:
+                    level = next(
+                        (s.get("buy_condition", "중도적") for s in strategy_table if s.get("name") == strat),
+                        "중도적",
+                    )
                     fut = executor.submit(
                         _safe_call,
                         smart_buy,
